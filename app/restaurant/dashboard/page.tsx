@@ -105,37 +105,49 @@ export default function RestaurantDashboard() {
       await loadOrders(restaurant.id, supabase)
       setLoading(false)
 
-      // Correct Realtime subscription order: channel -> on -> subscribe
+      // Realtime subscription for all order events (INSERT, UPDATE, DELETE)
       channel = supabase
         .channel(`restaurant-orders-${restaurant.id}`)
         .on(
           'postgres_changes',
           {
-            event: 'INSERT',
+            event: '*', // Listen to all events
             schema: 'public',
             table: 'orders',
             filter: `restaurant_id=eq.${restaurant.id}`,
           },
           async (payload) => {
-            console.log('New order received:', payload)
-            await loadOrders(restaurant.id, supabase)
-          }
-        )
-        .on(
-          'postgres_changes',
-          {
-            event: 'UPDATE',
-            schema: 'public',
-            table: 'orders',
-            filter: `restaurant_id=eq.${restaurant.id}`,
-          },
-          async (payload) => {
-            console.log('Order updated:', payload)
-            await loadOrders(restaurant.id, supabase)
+            console.log('Order change received:', payload.eventType, payload)
+            
+            if (payload.eventType === 'INSERT') {
+              // Fetch the new order with customer data
+              const { data: newOrder } = await supabase
+                .from('orders')
+                .select(`*, customer:profiles!orders_customer_id_fkey(full_name, phone)`)
+                .eq('id', payload.new.id)
+                .single()
+              
+              if (newOrder) {
+                setOrders(prev => [newOrder, ...prev])
+              }
+            } else if (payload.eventType === 'UPDATE') {
+              // Update the order in state immediately
+              setOrders(prev => prev.map(order => 
+                order.id === payload.new.id 
+                  ? { ...order, ...payload.new }
+                  : order
+              ))
+            } else if (payload.eventType === 'DELETE') {
+              // Remove the order from state
+              setOrders(prev => prev.filter(order => order.id !== payload.old.id))
+            }
           }
         )
         .subscribe((status) => {
           console.log('Restaurant channel status:', status)
+          if (status === 'SUBSCRIBED') {
+            console.log('✅ Restaurant realtime connected')
+          }
         })
     }
 

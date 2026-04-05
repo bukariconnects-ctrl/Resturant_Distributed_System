@@ -131,41 +131,74 @@ export default function DriverDashboard() {
       setLoading(false)
 
       // Subscribe to available_drivers channel for multicast notifications
-      // Correct order: channel -> on -> subscribe
       availableDriversChannel = supabase
         .channel('available_drivers')
-        .on('broadcast', { event: 'new_order_ready' }, (payload) => {
+        .on('broadcast', { event: 'new_order_ready' }, async (payload) => {
           console.log('New order ready for delivery:', payload)
           setNotification('🔔 طلب جديد جاهز للتوصيل!')
-          loadAvailableOrders(supabase)
+          // Fetch the new order with full data
+          const { data: newOrder } = await supabase
+            .from('orders')
+            .select(`*, restaurant:restaurants(name, location), customer:profiles!orders_customer_id_fkey(full_name, phone)`)
+            .eq('id', payload.payload.order_id)
+            .single()
+          if (newOrder) {
+            setAvailableOrders(prev => {
+              if (prev.find(o => o.id === newOrder.id)) return prev
+              return [newOrder, ...prev]
+            })
+          }
           setTimeout(() => setNotification(null), 5000)
         })
         .on('broadcast', { event: 'order_taken' }, (payload) => {
           console.log('Order taken by another driver:', payload)
+          // Immediately remove from UI
           setAvailableOrders(prev => prev.filter(o => o.id !== payload.payload.order_id))
         })
         .subscribe((status) => {
           console.log('Available drivers channel status:', status)
+          if (status === 'SUBSCRIBED') {
+            console.log('✅ Driver multicast channel connected')
+          }
         })
 
-      // Subscribe to orders table changes for ready status
+      // Subscribe to orders table changes for all events
       ordersChannel = supabase
         .channel('driver-orders-ready')
         .on(
           'postgres_changes',
           {
-            event: 'UPDATE',
+            event: '*',
             schema: 'public',
             table: 'orders',
           },
           async (payload) => {
-            console.log('Order update received:', payload)
-            const newStatus = (payload.new as Order)?.status
-            if (newStatus === 'ready') {
-              setNotification('🔔 طلب جديد جاهز للتوصيل!')
-              setTimeout(() => setNotification(null), 5000)
+            console.log('Order change received:', payload.eventType, payload)
+            const newOrder = payload.new as Order
+            const oldOrder = payload.old as Order
+            
+            if (payload.eventType === 'UPDATE') {
+              // Order became ready - add to available
+              if (newOrder?.status === 'ready' && oldOrder?.status !== 'ready') {
+                const { data: fullOrder } = await supabase
+                  .from('orders')
+                  .select(`*, restaurant:restaurants(name, location), customer:profiles!orders_customer_id_fkey(full_name, phone)`)
+                  .eq('id', newOrder.id)
+                  .single()
+                if (fullOrder) {
+                  setAvailableOrders(prev => {
+                    if (prev.find(o => o.id === fullOrder.id)) return prev
+                    return [fullOrder, ...prev]
+                  })
+                  setNotification('🔔 طلب جديد جاهز للتوصيل!')
+                  setTimeout(() => setNotification(null), 5000)
+                }
+              }
+              // Order no longer ready - remove from available
+              if (newOrder?.status !== 'ready' && oldOrder?.status === 'ready') {
+                setAvailableOrders(prev => prev.filter(o => o.id !== newOrder.id))
+              }
             }
-            await loadAvailableOrders(supabase)
           }
         )
         .subscribe((status) => {
@@ -183,12 +216,40 @@ export default function DriverDashboard() {
             table: 'deliveries',
             filter: `driver_id=eq.${user.id}`,
           },
-          async () => {
-            await loadMyDeliveries(user.id, supabase)
+          async (payload) => {
+            console.log('Delivery change received:', payload.eventType, payload)
+            
+            if (payload.eventType === 'INSERT') {
+              // New delivery assigned - fetch with full order data
+              const { data: newDelivery } = await supabase
+                .from('deliveries')
+                .select(`*, order:orders(*, restaurant:restaurants(name, location), customer:profiles!orders_customer_id_fkey(full_name, phone))`)
+                .eq('id', payload.new.id)
+                .single()
+              if (newDelivery) {
+                setMyDeliveries(prev => [newDelivery, ...prev])
+              }
+            } else if (payload.eventType === 'UPDATE') {
+              const newStatus = (payload.new as Delivery).status
+              if (newStatus === 'delivered') {
+                // Remove from active deliveries
+                setMyDeliveries(prev => prev.filter(d => d.id !== payload.new.id))
+              } else {
+                // Update delivery in state
+                setMyDeliveries(prev => prev.map(d => 
+                  d.id === payload.new.id ? { ...d, ...payload.new } : d
+                ))
+              }
+            } else if (payload.eventType === 'DELETE') {
+              setMyDeliveries(prev => prev.filter(d => d.id !== payload.old.id))
+            }
           }
         )
         .subscribe((status) => {
           console.log('Deliveries channel status:', status)
+          if (status === 'SUBSCRIBED') {
+            console.log('✅ Driver deliveries channel connected')
+          }
         })
     }
 

@@ -169,43 +169,61 @@ export default function OrderTrackingPage() {
     if (!orderId) return
 
     const supabase = createClient()
+    let previousStatus = order?.status
 
     const channel = supabase
-      .channel(`order-${orderId}`)
+      .channel(`order-tracking-${orderId}`)
       .on(
         'postgres_changes',
         {
-          event: 'UPDATE',
+          event: '*', // Listen to all events
           schema: 'public',
           table: 'orders',
           filter: `id=eq.${orderId}`,
         },
         (payload) => {
-          const newStatus = payload.new.status as OrderStatus
-          const oldStatus = order?.status
+          console.log('Order realtime update:', payload.eventType, payload)
+          
+          if (payload.eventType === 'UPDATE') {
+            const newStatus = payload.new.status as OrderStatus
 
-          // Update order state
-          setOrder(prev => prev ? { ...prev, ...payload.new } as Order : null)
+            // Update order state immediately
+            setOrder(prev => {
+              if (!prev) return null
+              return { ...prev, ...payload.new } as Order
+            })
 
-          // Show toast notification if status changed
-          if (oldStatus && newStatus !== oldStatus) {
-            const statusInfo = ORDER_STATUSES.find(s => s.key === newStatus)
-            toast.success(
-              `${statusInfo?.icon || '📋'} ${STATUS_MESSAGES[newStatus]}`,
-              {
-                duration: 5000,
-                description: `حالة الطلب: ${statusInfo?.label || newStatus}`,
-              }
-            )
+            // Show toast notification if status changed
+            if (previousStatus && newStatus !== previousStatus) {
+              const statusInfo = ORDER_STATUSES.find(s => s.key === newStatus)
+              toast.success(
+                `${statusInfo?.icon || '📋'} ${STATUS_MESSAGES[newStatus]}`,
+                {
+                  duration: 5000,
+                  description: `حالة الطلب: ${statusInfo?.label || newStatus}`,
+                }
+              )
+              previousStatus = newStatus
+            }
+          } else if (payload.eventType === 'DELETE') {
+            toast.error('تم حذف الطلب', { duration: 5000 })
+            setOrder(null)
+            setError('تم حذف هذا الطلب')
           }
         }
       )
-      .subscribe()
+      .subscribe((status) => {
+        console.log('Order tracking channel status:', status)
+        if (status === 'SUBSCRIBED') {
+          console.log('✅ Order tracking realtime connected')
+        }
+      })
 
     return () => {
+      console.log('Cleaning up order tracking channel')
       supabase.removeChannel(channel)
     }
-  }, [orderId, order?.status])
+  }, [orderId]) // Remove order?.status dependency to prevent re-subscription
 
   if (loading) {
     return (

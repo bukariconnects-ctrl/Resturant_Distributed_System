@@ -5,6 +5,150 @@
 
 ---
 
+## [0.8.0] - 4 أبريل 2026
+
+### 🏪 تسجيل المطاعم متعدد الخطوات + إصلاحات شاملة
+
+#### ✅ الإضافات الجديدة (Added)
+
+##### 1. نظام تسجيل المطاعم متعدد الخطوات (Multi-Step Wizard)
+- **الملف**: `app/signup/page.tsx`
+- **الميزات**:
+  - خطوة 1: بيانات الحساب (الاسم، الهاتف، البريد، كلمة المرور)
+  - خطوة 2: بيانات المطعم (اسم المطعم، الموقع) - لأصحاب المطاعم فقط
+  - شريط تقدم مرئي يعرض الخطوة الحالية
+  - زر "السابق" للعودة للخطوة الأولى
+  - تسجيل ذري (Atomic): إنشاء الحساب والمطعم في معاملة واحدة
+
+##### 2. دالة RPC لتسجيل صاحب المطعم
+- **الملف**: `supabase/migrations/20240523000017_register_restaurant_owner.sql`
+- **الدالة**: `register_restaurant_owner(p_user_id, p_full_name, p_phone, p_restaurant_name, p_restaurant_location, p_restaurant_status)`
+- **الميزات**:
+  - `SECURITY DEFINER` لتجاوز RLS
+  - إنشاء الملف الشخصي والمطعم في معاملة واحدة
+  - Rollback تلقائي عند فشل أي جزء
+  - رسائل خطأ واضحة
+
+##### 3. إصلاح دالة قبول التوصيل
+- **الملف**: `supabase/migrations/20240523000015_fix_accept_delivery.sql`
+- **التحسينات**:
+  - جلب `pickup_location` من جدول `restaurants`
+  - جلب `delivery_location` من ملاحظات الطلب
+  - إدراج المواقع في جدول `deliveries`
+
+##### 4. إصلاح دالة إكمال التوصيل
+- **الملف**: `supabase/migrations/20240523000016_fix_complete_delivery.sql`
+- **التحسينات**:
+  - إضافة أعمدة `delivered_at` و `picked_up_at` لجدول `deliveries`
+  - تحسين معالجة الأخطاء مع رسائل تفصيلية
+  - التحقق من نجاح التحديث باستخدام `GET DIAGNOSTICS`
+
+##### 5. إصلاح شامل لسياسات RLS
+- **الملف**: `supabase/migrations/20240523000014_fix_rls_recursion_final.sql`
+- **الدوال الجديدة**:
+  - `get_user_restaurant_ids(user_uuid)` - جلب معرفات مطاعم المستخدم
+  - `get_driver_order_ids(driver_uuid)` - جلب معرفات طلبات السائق
+  - `user_owns_restaurant(user_uuid, rest_id)` - التحقق من ملكية المطعم
+- **السياسات المُصلحة**:
+  - `orders_select_ready` - السائقين يرون الطلبات الجاهزة
+  - `orders_select_delivering` - السائقين يرون طلباتهم
+  - `orders_update_driver` - السائقين يحدثون طلباتهم
+
+#### 🔄 التحديثات (Changed)
+
+##### تحسين Realtime Subscriptions
+- **الملفات**: `app/restaurant/dashboard/page.tsx`, `app/driver/dashboard/page.tsx`
+- **التحسينات**:
+  - استخدام supabase client واحد في كل effect
+  - ترتيب صحيح: `channel() -> on() -> subscribe()`
+  - إضافة cleanup function مع `removeChannel()`
+  - إضافة session logging للتصحيح
+  - أسماء قنوات فريدة لكل مستخدم
+
+##### تحسين UserNav
+- **الملف**: `components/auth/UserNav.tsx`
+- **التحسينات**:
+  - استخدام `useRef` لتخزين supabase client
+  - فحص session قبل getUser
+  - إضافة cleanup لمنع memory leaks
+
+##### تحسين سكريبت Seed
+- **الملف**: `scripts/seed-users.mjs`
+- **التحسينات**:
+  - إضافة dotenv لتحميل `.env.local`
+  - استخدام `NEXT_PUBLIC_SUPABASE_URL` من البيئة
+
+#### 🐛 الإصلاحات (Fixed)
+
+| المشكلة | الحل |
+|---------|------|
+| `infinite recursion in policy for relation "orders"` | استخدام `SECURITY DEFINER` functions |
+| `null value in column "pickup_location"` | جلب الموقع من جدول `restaurants` |
+| `Error completing delivery` | إضافة عمود `delivered_at` وتحسين الدالة |
+| `Lock was released` errors | تقليل استدعاءات `supabase.auth.getUser()` |
+| Realtime subscriptions not cleaning up | إضافة cleanup في useEffect |
+
+#### 📁 الملفات المُضافة
+
+```
+supabase/migrations/20240523000013_fix_rls_final.sql
+supabase/migrations/20240523000014_fix_rls_recursion_final.sql
+supabase/migrations/20240523000015_fix_accept_delivery.sql
+supabase/migrations/20240523000016_fix_complete_delivery.sql
+supabase/migrations/20240523000017_register_restaurant_owner.sql
+```
+
+#### 📁 الملفات المُحدّثة
+
+```
+app/signup/page.tsx                    # Multi-step wizard
+app/restaurant/dashboard/page.tsx      # Realtime fixes
+app/driver/dashboard/page.tsx          # Realtime fixes
+components/auth/UserNav.tsx            # Performance fixes
+scripts/seed-users.mjs                 # dotenv support
+```
+
+#### 🔒 معمارية التسجيل الذري
+
+```
+┌─────────────────┐
+│   Signup Form   │
+│   (Step 1)      │
+│  User Details   │
+└────────┬────────┘
+         │
+         ▼ (if restaurant)
+┌─────────────────┐
+│   Signup Form   │
+│   (Step 2)      │
+│ Restaurant Info │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐     ┌─────────────────┐
+│  supabase.auth  │────→│   Auth User     │
+│    .signUp()    │     │   Created       │
+└────────┬────────┘     └─────────────────┘
+         │
+         ▼
+┌─────────────────┐     ┌─────────────────┐
+│  supabase.rpc   │────→│   TRANSACTION   │
+│  'register_     │     │  ┌───────────┐  │
+│   restaurant_   │     │  │ profiles  │  │
+│   owner'        │     │  │  INSERT   │  │
+└─────────────────┘     │  └─────┬─────┘  │
+                        │        │        │
+                        │  ┌─────▼─────┐  │
+                        │  │restaurants│  │
+                        │  │  INSERT   │  │
+                        │  └───────────┘  │
+                        │   COMMIT/       │
+                        │   ROLLBACK      │
+                        └─────────────────┘
+```
+
+---
+
 ## [0.7.0] - 2 أبريل 2026
 
 ### 🔒 إصلاح شامل لسياسات RLS ونظام تتبع الطلبات
