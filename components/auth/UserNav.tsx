@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { getRoleDisplayName } from '@/lib/auth'
+import { SyncStatusIndicator } from '@/components/ui/SyncStatusIndicator'
 import type { UserRole } from '@/lib/types/database.types'
 
 interface UserProfile {
@@ -85,6 +86,7 @@ export function UserNav() {
 
   return (
     <div className="flex items-center gap-4">
+      <SyncStatusIndicator />
       <div className="text-sm text-right">
         <p className="font-medium">{profile.full_name}</p>
         <p className="text-muted-foreground text-xs">

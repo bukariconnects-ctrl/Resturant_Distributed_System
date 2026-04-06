@@ -7,6 +7,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { UserNav } from '@/components/auth/UserNav'
 import Link from 'next/link'
+import { resilientRpc } from '@/lib/resilient-api'
+import { toast } from 'sonner'
 
 interface Order {
   id: string
@@ -80,7 +82,11 @@ export default function DriverDashboard() {
     if (ordersError) {
       console.error('Error loading orders:', ordersError)
     } else {
-      setAvailableOrders(data || [])
+      // Deduplicate by ID using Map
+      const uniqueOrders = Array.from(
+        new Map((data || []).map(o => [o.id, o])).values()
+      )
+      setAvailableOrders(uniqueOrders)
     }
   }, [])
 
@@ -102,7 +108,11 @@ export default function DriverDashboard() {
     if (deliveriesError) {
       console.error('Error loading deliveries:', deliveriesError)
     } else {
-      setMyDeliveries(data || [])
+      // Deduplicate by ID using Map
+      const uniqueDeliveries = Array.from(
+        new Map((data || []).map(d => [d.id, d])).values()
+      )
+      setMyDeliveries(uniqueDeliveries)
     }
   }, [])
 
@@ -227,7 +237,11 @@ export default function DriverDashboard() {
                 .eq('id', payload.new.id)
                 .single()
               if (newDelivery) {
-                setMyDeliveries(prev => [newDelivery, ...prev])
+                // Deduplicate: only add if not already in state
+                setMyDeliveries(prev => {
+                  if (prev.some(d => d.id === newDelivery.id)) return prev
+                  return [newDelivery, ...prev]
+                })
               }
             } else if (payload.eventType === 'UPDATE') {
               const newStatus = (payload.new as Delivery).status
@@ -273,12 +287,25 @@ export default function DriverDashboard() {
     try {
       const supabase = createClient()
 
-      // Call the accept_delivery function to handle race conditions
-      const { data, error: rpcError } = await supabase
-        .rpc('accept_delivery', {
+      // Use resilient RPC call with offline support
+      const { data, error: rpcError, queued } = await resilientRpc<{ success: boolean; error?: string }>({
+        functionName: 'accept_delivery',
+        payload: {
           p_order_id: orderId,
           p_driver_id: userId,
+        },
+      })
+
+      if (queued) {
+        toast.info('📱 تم حفظ الطلب للمزامنة', {
+          description: 'سيتم قبول التوصيل عند استعادة الاتصال',
         })
+        // Optimistically update UI
+        setAvailableOrders(prev => prev.filter(o => o.id !== orderId))
+        setNotification('📱 تم حفظ الطلب - سيتم المزامنة لاحقاً')
+        setTimeout(() => setNotification(null), 3000)
+        return
+      }
 
       if (rpcError) {
         console.error('RPC Error:', rpcError)
@@ -286,8 +313,8 @@ export default function DriverDashboard() {
         return
       }
 
-      if (!data.success) {
-        setError(data.error || 'لم يتم قبول الطلب')
+      if (!data?.success) {
+        setError(data?.error || 'لم يتم قبول الطلب')
         // Refresh available orders
         await loadAvailableOrders(supabase)
         return
@@ -326,11 +353,25 @@ export default function DriverDashboard() {
     try {
       const supabase = createClient()
 
-      const { data, error: rpcError } = await supabase
-        .rpc('complete_delivery', {
+      // Use resilient RPC call with offline support
+      const { data, error: rpcError, queued } = await resilientRpc<{ success: boolean; error?: string }>({
+        functionName: 'complete_delivery',
+        payload: {
           p_delivery_id: deliveryId,
           p_driver_id: userId,
+        },
+      })
+
+      if (queued) {
+        toast.info('📱 تم حفظ التوصيل للمزامنة', {
+          description: 'سيتم تأكيد التوصيل عند استعادة الاتصال',
         })
+        // Optimistically update UI
+        setMyDeliveries(prev => prev.filter(d => d.id !== deliveryId))
+        setNotification('📱 تم حفظ التوصيل - سيتم المزامنة لاحقاً')
+        setTimeout(() => setNotification(null), 3000)
+        return
+      }
 
       if (rpcError) {
         console.error('RPC Error:', rpcError)
@@ -338,8 +379,8 @@ export default function DriverDashboard() {
         return
       }
 
-      if (!data.success) {
-        setError(data.error || 'لم يتم إكمال التوصيل')
+      if (!data?.success) {
+        setError(data?.error || 'لم يتم إكمال التوصيل')
         return
       }
 

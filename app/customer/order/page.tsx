@@ -11,6 +11,8 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { UserNav } from '@/components/auth/UserNav'
+import { resilientRpc } from '@/lib/resilient-api'
+import { toast } from 'sonner'
 
 interface Restaurant {
   id: string
@@ -80,13 +82,26 @@ export default function CustomerOrderPage() {
         return
       }
 
-      // Use RPC function to create order (bypasses RLS recursion)
-      const { data: orderId, error: orderError } = await supabase
-        .rpc('create_order', {
+      // Use resilient RPC call with offline support
+      const { data: orderId, error: orderError, queued } = await resilientRpc<string>({
+        functionName: 'create_order',
+        payload: {
           p_restaurant_id: selectedRestaurant,
           p_total_amount: amount,
           p_notes: notes || null,
+        },
+      })
+
+      // If queued for later sync
+      if (queued) {
+        toast.info('📱 تم حفظ الطلب للمزامنة', {
+          description: 'سيتم إرسال طلبك تلقائياً عند استعادة الاتصال',
+          duration: 5000,
         })
+        setSuccess('تم حفظ الطلب! سيتم إرساله عند استعادة الاتصال.')
+        setTimeout(() => router.push('/customer'), 2000)
+        return
+      }
 
       if (orderError) {
         console.error('Order creation error:', orderError)

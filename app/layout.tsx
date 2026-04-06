@@ -3,6 +3,7 @@ import "./globals.css";
 import { Geist } from "next/font/google";
 import { cn } from "@/lib/utils";
 import { Toaster } from "@/components/ui/sonner";
+import { SyncProvider } from "@/components/providers/SyncProvider";
 
 const geist = Geist({subsets:['latin'],variable:'--font-sans'});
 
@@ -19,7 +20,9 @@ export default function RootLayout({
   return (
     <html lang="ar" dir="rtl" className={cn("font-sans", geist.variable)}>
       <body className="antialiased">
-        {children}
+        <SyncProvider>
+          {children}
+        </SyncProvider>
         <Toaster position="top-center" richColors />
       </body>
     </html>

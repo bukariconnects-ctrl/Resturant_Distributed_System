@@ -7,6 +7,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { UserNav } from '@/components/auth/UserNav'
 import Link from 'next/link'
+import { resilientUpdate } from '@/lib/resilient-api'
+import { toast } from 'sonner'
 
 interface Order {
   id: string
@@ -67,7 +69,11 @@ export default function RestaurantDashboard() {
       console.error('Error loading orders:', ordersError)
       setError('حدث خطأ في تحميل الطلبات')
     } else {
-      setOrders(data || [])
+      // Deduplicate by ID using Map
+      const uniqueOrders = Array.from(
+        new Map((data || []).map(o => [o.id, o])).values()
+      )
+      setOrders(uniqueOrders)
     }
   }, [])
 
@@ -128,7 +134,11 @@ export default function RestaurantDashboard() {
                 .single()
               
               if (newOrder) {
-                setOrders(prev => [newOrder, ...prev])
+                // Deduplicate: only add if not already in state
+                setOrders(prev => {
+                  if (prev.some(o => o.id === newOrder.id)) return prev
+                  return [newOrder, ...prev]
+                })
               }
             } else if (payload.eventType === 'UPDATE') {
               // Update the order in state immediately
@@ -164,14 +174,20 @@ export default function RestaurantDashboard() {
 
   const handleAcceptOrder = async (orderId: string) => {
     setUpdatingOrder(orderId)
-    const supabase = createClient()
 
-    const { error: updateError } = await supabase
-      .from('orders')
-      .update({ status: 'confirmed' })
-      .eq('id', orderId)
+    const { error: updateError, queued } = await resilientUpdate({
+      table: 'orders',
+      id: orderId,
+      payload: { status: 'confirmed' },
+    })
 
-    if (updateError) {
+    if (queued) {
+      toast.info('📱 تم حفظ التحديث للمزامنة', {
+        description: 'سيتم تحديث الطلب عند استعادة الاتصال',
+      })
+      // Optimistically update UI
+      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'confirmed' } : o))
+    } else if (updateError) {
       console.error('Error accepting order:', updateError)
       setError('حدث خطأ في قبول الطلب')
     }
@@ -183,10 +199,21 @@ export default function RestaurantDashboard() {
     setUpdatingOrder(orderId)
     const supabase = createClient()
 
-    const { error: updateError } = await supabase
-      .from('orders')
-      .update({ status: newStatus })
-      .eq('id', orderId)
+    const { error: updateError, queued } = await resilientUpdate({
+      table: 'orders',
+      id: orderId,
+      payload: { status: newStatus },
+    })
+
+    if (queued) {
+      toast.info('📱 تم حفظ التحديث للمزامنة', {
+        description: 'سيتم تحديث حالة الطلب عند استعادة الاتصال',
+      })
+      // Optimistically update UI
+      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o))
+      setUpdatingOrder(null)
+      return
+    }
 
     if (updateError) {
       console.error('Error updating order:', updateError)
