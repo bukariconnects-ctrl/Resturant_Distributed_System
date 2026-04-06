@@ -4,6 +4,7 @@ import { Geist } from "next/font/google";
 import { cn } from "@/lib/utils";
 import { Toaster } from "@/components/ui/sonner";
 import { SyncProvider } from "@/components/providers/SyncProvider";
+import { CartProvider } from "@/components/providers/CartProvider";
 
 const geist = Geist({subsets:['latin'],variable:'--font-sans'});
 
@@ -21,7 +22,9 @@ export default function RootLayout({
     <html lang="ar" dir="rtl" className={cn("font-sans", geist.variable)}>
       <body className="antialiased">
         <SyncProvider>
-          {children}
+          <CartProvider>
+            {children}
+          </CartProvider>
         </SyncProvider>
         <Toaster position="top-center" richColors />
       </body>

@@ -273,6 +273,11 @@ export default function RestaurantDashboard() {
               ← العودة
             </Link>
             <h1 className="text-xl font-bold text-green-600">لوحة التحكم</h1>
+            <Link href="/restaurant/menu">
+              <Button variant="outline" size="sm">
+                إدارة القائمة
+              </Button>
+            </Link>
           </div>
           <UserNav />
         </div>
